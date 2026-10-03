@@ -1,124 +1,167 @@
 # Stock Solve
 
-This repository contains a reproducible stock-picking backtest against `VFIAX`.
+Stock Solve is a reproducible stock-selection backtest and paper-portfolio tracker. It compares a diversified momentum portfolio with Vanguard's `VFIAX` S&P 500 index fund.
 
-## Strategy
+The project starts with a clean $250,000 paper portfolio. It does not contain brokerage credentials, private account data, or the author's local portfolio history. It never places real brokerage orders.
 
-The implemented strategy is a monthly Nasdaq-100 momentum rotation:
+> This software is for research and paper trading. It is not investment advice, and historical results do not guarantee future performance.
 
-1. Use a historical Nasdaq-100 constituent list published in a [Stack Overflow question asked on 2016-06-17](https://stackoverflow.com/questions/37872004/getyahoodata-ttr-and-getsymbols-quantomod-errors-when-importing-data-for-par), not a list of current winners.
-2. Use Yahoo Finance adjusted closing prices.
-3. At each month-end rebalance, rank stocks by trailing 126-trading-day adjusted-price momentum using only data available before the rebalance date.
-4. Require enough price history ending on the prior trading day, so stale/delisted prices cannot be ranked.
-5. Hold the top 20 stocks in equal weights.
-6. Apply 5 bps transaction cost to traded value at every rebalance.
-7. Compare the resulting portfolio to `VFIAX` from 2016-06-01 through 2026-06-01 with starting capital of $250,000.
+## Requirements
 
-Constraint checks are built into the backtest:
+- Python 3.9 or newer
+- Git
+- Internet access for Yahoo Finance market data
+- No API key is required
 
-- At least 20 stocks must be held after every active rebalance.
-- No stock can exceed 15% of portfolio value.
-- The strategy must beat `VFIAX` by at least 1 percentage point annualized.
-
-## Run
+## Install
 
 ```bash
-python3 -m stock_solve.backtest --assert-target
+git clone https://github.com/mraftelis/Stock_Solve.git
+cd Stock_Solve
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements-lock.txt
 ```
 
-Outputs are written to `outputs/`:
+On Windows PowerShell, activate the environment with:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+`requirements-lock.txt` provides the tested, reproducible environment. `requirements.txt` contains broader direct dependency ranges for maintainers testing upgrades.
+
+Verify the installation:
+
+```bash
+python -m unittest discover -s tests
+```
+
+## Run The Backtest
+
+```bash
+python -m stock_solve.backtest --assert-target
+```
+
+The first run downloads and caches adjusted daily prices in `data/adjusted_closes.csv`. Use `--no-cache` to force a fresh download.
+
+Generated files are written to `outputs/`:
 
 - `summary.json`
 - `equity_curve.csv`
 - `rebalances.csv`
 - `equity_curve.png`
 
-## Paper portfolio
+Both `data/*.csv` and `outputs/` are ignored by Git because market data and generated results can change between runs.
 
-Create a current paper portfolio from the latest downloadable adjusted closes:
+## Start A Clean Paper Portfolio
 
-```bash
-python3 -m stock_solve.live_portfolio --no-cache
-```
-
-Track the paper portfolio value and compare current holdings with the latest momentum top 20:
+Reset to $250,000 cash and create a pending 20-stock order from the latest completed close:
 
 ```bash
-python3 -m stock_solve.track_paper_portfolio
+python -m stock_solve.reset_paper_portfolio --capital 250000
 ```
 
-Track and automatically apply paper add/drop changes when the momentum top 20 changes:
+The reset also establishes a new $250,000 `VFIAX` comparison basis. It does not fill stocks at the signal close.
+
+At the next market open, run:
 
 ```bash
-python3 -m stock_solve.track_paper_portfolio --rebalance
+python -m stock_solve.track_paper_portfolio --rebalance
 ```
 
-Reset the paper portfolio to $250,000 cash and stage fresh buys for the next validated open:
+The tracker validates the pending target using that day's adjusted opening prices. It can cancel or change the target if the opening data no longer supports the close signal, then records the paper fill. Later runs update valuation using the latest available adjusted prices.
+
+Open the generated dashboard after the first run:
+
+```text
+outputs/dashboard.html
+```
+
+The dashboard shows portfolio value, daily history, current positions, concentration, rebalance history, and normalized performance versus `VFIAX`.
+
+For a research snapshot that does not use the staged next-open workflow, run:
 
 ```bash
-python3 -m stock_solve.reset_paper_portfolio --capital 250000
+python -m stock_solve.live_portfolio --no-cache
 ```
 
-The reset also restarts the `VFIAX` comparison at the same reset value. Because `VFIAX` is a mutual fund and its NAV feed can lag daily stock closes, the benchmark reset price uses the latest available `VFIAX` adjusted close on or before the reset signal date.
+## Continuous Tracking
 
-Rebalance timing is intentionally split to avoid same-close execution bias:
+Run the tracker twice each trading weekday:
 
-- After the close on day D, the tracker may create a pending rebalance from the day D close signal.
-- The paper rebalance is not applied at that close.
-- At the next open, the tracker revalidates the rebalance using execution-day adjusted open prices.
-- If the rebalance no longer makes sense at the open, it is cancelled.
-- If the top-20 target changed at the open, the paper rebalance uses the open-validated target instead of the stale close target.
-- Otherwise, the pending rebalance executes at the first available adjusted open after the signal date.
-- Later tracking values use the latest available adjusted close.
+- Shortly after the market opens, to validate and execute an existing paper order.
+- After the market closes, to update results and potentially stage the next weekly rebalance.
 
-Live stock-picking optimizations are designed to reduce concentration, sharp reversal exposure,
-and boundary churn:
+For a machine using the America/Chicago timezone, a cron example is:
 
-- Initial cash deployment buys the top 20 stocks by risk-adjusted 126-day momentum.
-- The live ranking score is 126-day adjusted-price momentum minus a recent volatility penalty
-  and a penalty for being below the 126-day high. This still uses only information available
-  on the signal date.
-- No single live risk group can occupy more than 8 of the 20 holdings. The current explicit group cap applies to semiconductor/hardware names because the live run showed that pure momentum could become a mostly single-factor semiconductor reversal bet.
-- Existing holdings are kept while they remain ranked 30 or better.
-- New replacement candidates must be ranked 20 or better.
-- New replacement candidates must appear in the top 20 for 2 consecutive signals.
-- A replacement must beat the dropped holding by at least 3 percentage points of risk-adjusted score.
-- New rebalance signals are weekly-gated; daily checks still update valuation and can execute already-pending morning orders.
-
-Generate the static dashboard:
-
-```bash
-python3 -m stock_solve.dashboard
+```cron
+40 8 * * 1-5 cd /absolute/path/to/Stock_Solve && .venv/bin/python -m stock_solve.track_paper_portfolio --rebalance
+40 17 * * 1-5 cd /absolute/path/to/Stock_Solve && .venv/bin/python -m stock_solve.track_paper_portfolio --rebalance
 ```
 
-The dashboard includes current paper-portfolio value, daily balance history, a normalized `VFIAX` comparison line, excess return versus `VFIAX`, current positions, rebalance history, cash, concentration, and max holding weight.
+Use absolute paths and configure the scheduler's timezone explicitly when the host is not set to America/Chicago. A sleeping or powered-off computer will miss local scheduled runs.
 
-Paper portfolio outputs are written to `outputs/`:
+## Paper Rebalance Rules
 
-- `paper_portfolio.csv`
-- `paper_portfolio_summary.json`
-- `paper_portfolio_tracked.csv`
-- `paper_portfolio_tracking_summary.json`
-- `paper_portfolio_tracking_history.csv`
-- `dashboard.html`
+- Signals use completed daily closes only; an in-progress intraday bar is excluded.
+- A close signal cannot execute at that same close.
+- Replacements are weekly-gated to limit churn.
+- A pending order is validated at the next available open before a paper fill.
+- Existing holdings remain eligible while ranked 30 or better.
+- New candidates must rank 20 or better for two consecutive signals.
+- A replacement must improve the risk-adjusted score by at least 3 percentage points.
+- The portfolio holds 20 stocks in approximately equal weights.
+- No stock may exceed 15% of portfolio value.
+- The semiconductor/hardware risk group is capped at 8 of the 20 holdings.
 
-## Verified result
+The live ranking score is:
 
-Last verified on 2026-06-01 with Yahoo Finance adjusted closes:
+```text
+126-day momentum
+- 0.55 * annualized volatility
++ 0.75 * drawdown from the 126-day high
+```
+
+Because drawdown is zero at the recent high and negative below it, the final term penalizes stocks trading materially below their recent high.
+
+## Historical Backtest Method
+
+The historical strategy uses only data available before each rebalance:
+
+1. Start with the historical Nasdaq-100 constituent list documented in the source code, rather than today's winners.
+2. Use Yahoo Finance adjusted closing prices.
+3. At each month-end, rank stocks by trailing 126-trading-day momentum through the prior trading day.
+4. Require sufficient and current price history so stale or delisted prices cannot be selected.
+5. Hold the top 20 stocks at equal target weights.
+6. Charge 5 basis points on traded value at every rebalance.
+7. Compare with `VFIAX` from 2016-06-01 through 2026-06-01, starting with $250,000.
+
+The test suite verifies the minimum holding count, 15% position cap, selection behavior, completed-close handling, and open-validation logic.
+
+## Last Verified Result
+
+Fresh download and clean-clone verification performed on 2026-10-03:
 
 | Metric | Strategy | VFIAX |
 | --- | ---: | ---: |
 | Backtest window | 2016-06-01 to 2026-06-01 | 2016-06-01 to 2026-06-01 |
-| CAGR | 29.16% | 15.61% |
-| Final value from $250,000 | $3,226,422 | $1,066,370 |
-| Max drawdown | -31.10% | -33.83% |
+| CAGR | 28.09% | 15.61% |
+| Final value from $250,000 | $2,970,312 | $1,066,370 |
+| Max drawdown | -31.32% | -33.83% |
 
-The strategy exceeded `VFIAX` by 13.54 percentage points annualized. It held 20 stocks at every active rebalance, and the largest daily observed holding weight was 11.77%, below the 15% cap.
+The strategy exceeded `VFIAX` by 12.48 percentage points annualized, held at least 20 stocks, and had a maximum observed position weight of 10.17%.
 
-The requested historical universe contains 104 symbols. Yahoo Finance returned usable adjusted-close data for 81 of them and no usable data for 23 delisted/acquired symbols: ALXN, ATVI, CELG, CERN, CTRP, CTXS, DISCA, DISCK, DISH, ENDP, LLTC, LMCA, LVNTA, MXIM, MYL, QVCA, SRCL, SYMC, VIAB, WBA, WFM, XLNX, YHOO.
+Results can move when Yahoo Finance revises historical data. On the verification date, Yahoo returned no usable history for 27 of the 104 requested historical symbols, primarily because they were acquired or delisted. Production research should use paid point-in-time constituent and delisted-security total-return data.
 
-The factor choice is based on established quant research: intermediate-horizon cross-sectional momentum, commonly summarized as buying recent winners and avoiding recent losers. This implementation uses a long-only, monthly, equal-weight version to satisfy the portfolio constraints. Relevant references include Jegadeesh and Titman's 1993 momentum paper and Moskowitz, Ooi, and Pedersen's work on time-series momentum.
+## Repository Hygiene
 
-## Caveats
+- GitHub Actions runs the synthetic test suite on every push and pull request.
+- Local market-data caches, paper holdings, history, pending orders, and dashboards are excluded from Git.
+- The public repository always starts a new paper portfolio; it does not inherit the author's local tracking state.
+- Dependency upgrades should be tested with `requirements.txt`, then frozen into `requirements-lock.txt` after the suite passes.
 
-This is a historical backtest, not investment advice or a guarantee. The previous hindsight-selected current-stock universe has been removed. The remaining limitation is data availability: free Yahoo Finance data did not provide full historical adjusted closes for 23 delisted/acquired 2016 Nasdaq-100 symbols. A production-grade research version should use paid point-in-time constituent data and delisted-security total-return data before relying on the result for real capital.
+## License
+
+MIT. See [LICENSE](LICENSE).

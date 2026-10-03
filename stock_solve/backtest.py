@@ -217,7 +217,9 @@ def performance(equity: pd.Series) -> Performance:
 
 
 def first_trading_days_after_month_end(index: pd.DatetimeIndex, start: str) -> list[pd.Timestamp]:
-    month_ends = pd.Series(index=index, dtype=float).resample("M").last().index
+    month_ends = pd.DatetimeIndex(
+        [period.to_timestamp("M") for period in index.to_period("M").unique()]
+    )
     rebalancing_dates: list[pd.Timestamp] = []
     start_idx = index.searchsorted(pd.Timestamp(start))
     if start_idx < len(index):

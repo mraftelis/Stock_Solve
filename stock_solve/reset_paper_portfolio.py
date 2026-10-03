@@ -16,6 +16,7 @@ from stock_solve.live_portfolio import (
 )
 from stock_solve.track_paper_portfolio import (
     PENDING_REBALANCE_FILE,
+    completed_close_prices,
     pending_from_recommendation,
     save_pending_rebalance,
 )
@@ -42,7 +43,9 @@ def reset_to_cash_with_pending_order(
     data_start: str = "2025-01-01",
 ) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
-    prices = download_adjusted_closes(CURRENT_NASDAQ_100, data_start, None, None)
+    prices = completed_close_prices(
+        download_adjusted_closes(CURRENT_NASDAQ_100, data_start, None, None)
+    )
     recommended, recommendation_summary = build_paper_portfolio(
         prices,
         CURRENT_NASDAQ_100,

@@ -172,6 +172,7 @@ class BacktestTests(unittest.TestCase):
         self.assertTrue(same_target_tickers(["AAA", "BBB"], ["BBB", "AAA"]))
         self.assertFalse(same_target_tickers(["AAA", "BBB"], ["AAA", "CCC"]))
 
+
     def test_research_ranker_can_skip_recent_data_without_using_it_for_momentum(self):
         index = pd.bdate_range("2026-01-01", periods=8)
         prices = pd.DataFrame(
